@@ -1,60 +1,94 @@
 const express = require('express')
 const router = new express.Router()
-const User = require('../models/user')
-
-router.get('/users', async (req, res)=>{
-    try{
-    const users = await User.find({})
-    res.send(users)
-    }catch(e){
-        res.status(400).send(e)
+const User = require('../models/user_model')
+const auth = require('../middleware/auth')
+const multer = require('multer')
+const upload = multer({
+    dest:'images',
+    limits:{
+        fileSize:1000000
+    },
+    fileFilter(req,file,cb){
+        if(!file.originalname.match(/\.(jpg|jpeg|png)$/)){   //using regular expressions here
+            return cb(new Error('Avatar must be an Image'))
+        }
+        cb(undefined,true)
     }
+
+})
+router.get('/users', auth ,async (req, res)=>{
+    res.send(req.user)
 })
 
-router.get('/users/:id', async (req,res)=>{
-    const _id = req.params.id
-    try{
-      const user = await User.findById(_id)
-      user?res.send(user):res.status(404).send()
-    }catch(e){
-        res.status(400).send(e)
+router.post('/users/logout', auth, async(req,res)=>{
+    try {
+        req.user.tokens = req.user.tokens.filter((token)=>{
+            return token.token !== req.token
+        })
+        await req.user.save()
+        res.send()
+    } catch (error) {
+        res.status(500).send()
     }
+})
+router.post('/users/logoutAll',auth, async(req, res)=>{
+    try {
+        req.user.tokens = []
+        await req.user.save()
+        res.send()
+    } catch (error) {
+        res.staus(500).send()
+    }
+})
+router.post('/users/me/avatar',upload.single('avatar'),(req,res)=>{
+res.send()
 })
 
 router.post('/users', async (req,res)=>{
 const user = new User(req.body)
 try{
-    await user.save()
+   const savedUser = await user.save()
+   const token = await user.generateAuthToken()
+    res.send({savedUser , token})
 }catch(e){
        res.status(400).send(e)
 }    
 })
 
+router.post('/users/login', async (req,res)=>{
+    try {
+        const user = await User.findByCredentials(req.body.email,req.body.password)
+        const token = await user.generateAuthToken()
+        res.send({user, token})
+    } catch (error) {
+        res.status(400).send()
+    }
+})
 
-router.delete('/users/:id', async (req,res)=>{
+router.delete('/users/me', auth ,  async (req,res)=>{
     try {        
-        const user = await User.findByIdAndDelete(req.params.id)
-        !user?res.status(404).send("no user with that id"):res.send(user)
+        await req.user.remove()
+        res.send(req.user)
     } catch (error) {
        res.status(500).send() 
     }
 })
-router.patch('/users/:id', async (req,res)=>{
+
+router.patch('/users/me', auth , async (req,res)=>{
     const updates =Object.keys(req.body)
-    const allowedUpdates = ['name', 'email','passoword','age']
+    const allowedUpdates = ['name', 'email','password','age']
     const isValidOperation = updates.every((update)=>allowedUpdates.includes(update))
     !isValidOperation? res.status(400).send('Not a valid field to update'):null
   
     try {
-        const user = await User.findByIdAndUpdate(req.params.id, req.body,{new:true, runValidators:true})
-        user?res.send(user):res.status(404).send()
+       
+        updates.forEach((update)=>req.user[update] = req.body[update])
+        await req.user.save()
+      res.send(req.user)
+      
     } catch (error) {
         res.status(400).send(error)
     }
 })
-
-
-
-
 
 module.exports = router
